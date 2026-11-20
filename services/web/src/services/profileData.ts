@@ -426,7 +426,8 @@ const setCachedBeatmapSet = (beatmapSet: ApiBeatmapset): void => {
     }
     for (const b of normalizedSet.beatmaps) {
         if (b.beatmap_id > 0) {
-            setCachedBeatmap(b)
+            const existing = beatmapMirrorCache.get(b.beatmap_id)
+            setCachedBeatmap(existing?.scores && !b.scores ? { ...b, scores: existing.scores } : b)
         }
     }
     persistMapToStorage(BEATMAP_STORAGE_KEY, beatmapMirrorCache, MAX_CACHED_BEATMAPS)
@@ -780,6 +781,23 @@ export const fetchBeatmapWithSetFromMirror = async (
 
     inFlightBeatmapSetRequests.set(requestKey, requestPromise)
     return requestPromise
+}
+
+export const fetchBeatmapScores = async (
+    beatmapId: number | string,
+    type: 'all' | 'local' | 'global' = 'all'
+): Promise<ApiScore[]> => {
+    try {
+        const res = await api.get<ApiScore[]>(`/beatmap/${encodeURIComponent(String(beatmapId))}/scores`, {
+            params: { type },
+        })
+        if (Array.isArray(res.data)) {
+            return res.data
+        }
+    } catch {
+        // Fallback silencioso
+    }
+    return []
 }
 
 interface KnownPlayerMeta {

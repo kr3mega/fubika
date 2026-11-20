@@ -1,18 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import style from './style.module.css'
 import { WrapperComponent } from '../../components/components.export'
 import NotFoundPage from '../notfound'
 import {
     type ApiBeatmap,
     type ApiBeatmapset,
+    type ApiScore,
+    DEFAULT_AVATAR_URL,
+    fetchBeatmapScores,
     fetchBeatmapWithSetFromMirror,
     getCachedBeatmapSetFromMirror,
 } from '../../services/profileData'
 
 const A = '/assets'
-
-const rows = Array.from({ length: 50 }, (_, i) => i + 1)
 
 const getDifficultyIcon = (starRating: number): string => {
     if (starRating < 2.0) return '072f7.svg'
@@ -353,33 +354,292 @@ function MapCard({
     )
 }
 
-function Leaderboard() {
+interface LeaderboardProps {
+    beatmapId: number
+    initialScores?: ApiScore[]
+}
+
+const stateNames: Record<string, string> = {
+    AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas',
+    BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal', ES: 'Espírito Santo',
+    GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul',
+    MG: 'Minas Gerais', PA: 'Pará', PB: 'Paraíba', PR: 'Paraná',
+    PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte',
+    RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina',
+    SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins',
+    BR: 'Brasil',
+}
+
+const getFlagUrl = (country?: string): string => {
+    const code = (country || 'BR').toUpperCase()
+    if (stateNames[code]) {
+        return `/flags/${code}.svg`
+    }
+    return `https://osu.ppy.sh/images/flags/${code}.png`
+}
+
+const getGradeColor = (grade?: string): string => {
+    switch ((grade || '').toUpperCase()) {
+        case 'XH':
+        case 'SH':
+            return '#38bdf8'
+        case 'X':
+        case 'SS':
+        case 'S':
+            return '#facc15'
+        case 'A':
+            return '#4ade80'
+        case 'B':
+            return '#60a5fa'
+        case 'C':
+            return '#c084fc'
+        case 'D':
+            return '#f87171'
+        default:
+            return '#94a3b8'
+    }
+}
+
+const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) => {
+    const [scope, setScope] = useState<'local' | 'global'>(() =>
+        initialScores && initialScores.length === 0 ? 'global' : 'local'
+    )
+    const [localScores, setLocalScores] = useState<ApiScore[] | null>(initialScores ?? null)
+    const [globalScores, setGlobalScores] = useState<ApiScore[] | null>(null)
+    const [loadingScope, setLoadingScope] = useState<'local' | 'global' | null>(null)
+
+    useEffect(() => {
+        let isMounted = true
+
+        if (scope === 'global' && globalScores === null) {
+            const loadGlobal = async () => {
+                setLoadingScope('global')
+                try {
+                    const data = await fetchBeatmapScores(beatmapId, 'global')
+                    if (isMounted) setGlobalScores(data)
+                } finally {
+                    if (isMounted) setLoadingScope(null)
+                }
+            }
+            loadGlobal()
+        } else if (scope === 'local' && localScores === null) {
+            const loadLocal = async () => {
+                setLoadingScope('local')
+                try {
+                    const data = await fetchBeatmapScores(beatmapId, 'local')
+                    if (isMounted) setLocalScores(data)
+                } finally {
+                    if (isMounted) setLoadingScope(null)
+                }
+            }
+            loadLocal()
+        }
+
+        return () => {
+            isMounted = false
+        }
+    }, [scope, beatmapId, globalScores, localScores])
+
+    const handleScopeChange = (newScope: 'local' | 'global') => {
+        setScope(newScope)
+    }
+
+    const activeScores = scope === 'global' ? globalScores : localScores
+    const loading = loadingScope === scope || activeScores === null
+
     return (
         <section className={style.leaderboard} id="leaderboard">
             <div className={style.cats} aria-hidden="true">
                 <img className={style.catLeft} src={`${A}/583f4.png`} alt="" />
                 <img className={style.catRight} src={`${A}/17c9d.png`} alt="" />
             </div>
+
             <div className={style.boardHeading}>
                 <h2>Leaderboard do mapa</h2>
             </div>
-            <div className={style.tableHead} aria-hidden="true">
-                <span>Jogador</span>
-                <span>pp</span>
-                <span>300</span>
-                <span>100</span>
-                <span>50</span>
-                <span>X</span>
-                <span>Precisão</span>
-                <span>Mods</span>
-                <span>Combo máximo</span>
+
+            <div className={style.modeSelector}>
+                <button
+                    type="button"
+                    className={`${style.modeBtn} ${scope === 'local' ? style.activeMode : ''}`}
+                    onClick={() => handleScopeChange('local')}
+                >
+                    Servidor Fubika
+                </button>
+                <button
+                    type="button"
+                    className={`${style.modeBtn} ${scope === 'global' ? style.activeMode : ''}`}
+                    onClick={() => handleScopeChange('global')}
+                >
+                    Global (osu!)
+                </button>
             </div>
-            <div className={style.scoreList}>
-                {rows.map((position) => (
-                    <article className={style.scoreRow} key={position}>
-                        <span className={style.position}>#{position}</span>
-                    </article>
-                ))}
+
+            <div className={style.tableCard}>
+                <div className={style.listSection}>
+                    <div className={style.tableHeader}>
+                        <span className={style.colRank}></span>
+                        <span className={style.colPlayer}>Jogador</span>
+                        <span className={style.colPP}>pp</span>
+                        <span className={style.col300}>300</span>
+                        <span className={style.col100}>100</span>
+                        <span className={style.col50}>50</span>
+                        <span className={style.colMiss}>X</span>
+                        <span className={style.colAcc}>Precisão</span>
+                        <span className={style.colMods}>Mods</span>
+                        <span className={style.colCombo}>Combo máximo</span>
+                    </div>
+
+                    <div className={style.rowsContainer}>
+                        {loading ? (
+                            <div className={style.statusMessage}>
+                                Carregando leaderboard do mapa...
+                            </div>
+                        ) : activeScores && activeScores.length > 0 ? (
+                            activeScores.map((score, index) => {
+                                const rankNumber = index + 1
+                                const isOsuGlobal = scope === 'global'
+                                const rankClass =
+                                    rankNumber === 1
+                                        ? style.rankTop1
+                                        : rankNumber === 2
+                                          ? style.rankTop2
+                                          : rankNumber === 3
+                                            ? style.rankTop3
+                                            : ''
+
+                                const rowContent = (
+                                    <>
+                                        <div className={`${style.colRank} ${rankClass}`}>
+                                            <span className={style.rankHash}>#</span>
+                                            <span className={style.rankValue}>{rankNumber}</span>
+                                        </div>
+
+                                        <div className={style.colPlayer}>
+                                            <div className={style.nameInfo}>
+                                                <img
+                                                    src={getFlagUrl(score.player?.country)}
+                                                    alt={score.player?.country || 'BR'}
+                                                    title={
+                                                        stateNames[
+                                                            (score.player?.country || '').toUpperCase()
+                                                        ] || score.player?.country || 'Brasil'
+                                                    }
+                                                    className={style.flagIcon}
+                                                    onError={(e) => {
+                                                        e.currentTarget.src = '/flags/BR.svg'
+                                                    }}
+                                                />
+                                                <img
+                                                    src={score.player?.pfp || DEFAULT_AVATAR_URL}
+                                                    alt=""
+                                                    className={style.playerAvatar}
+                                                    onError={(e) => {
+                                                        e.currentTarget.src = DEFAULT_AVATAR_URL
+                                                    }}
+                                                />
+                                                <span className={style.username}>
+                                                    {score.player?.name || 'Jogador'}
+                                                </span>
+                                                {score.grade && (
+                                                    <span
+                                                        className={style.gradeBadge}
+                                                        style={{ color: getGradeColor(score.grade) }}
+                                                    >
+                                                        {score.grade}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className={`${style.colPP} ${style.ppValue}`}>
+                                            {score.pp && Math.round(score.pp) > 0
+                                                ? `${Math.round(score.pp)}pp`
+                                                : '-'}
+                                        </div>
+
+                                        <div className={`${style.col300} ${style.statValue}`}>
+                                            {score.n300 ?? 0}
+                                        </div>
+
+                                        <div className={`${style.col100} ${style.statValue}`}>
+                                            {score.n100 ?? 0}
+                                        </div>
+
+                                        <div className={`${style.col50} ${style.statValue}`}>
+                                            {score.n50 ?? 0}
+                                        </div>
+
+                                        <div
+                                            className={`${style.colMiss} ${
+                                                score.nmiss && score.nmiss > 0
+                                                    ? style.missDanger
+                                                    : style.missZero
+                                            }`}
+                                        >
+                                            {score.nmiss ?? 0}
+                                        </div>
+
+                                        <div className={`${style.colAcc} ${style.statValue}`}>
+                                            {(score.acc || 0).toFixed(2)}%
+                                        </div>
+
+                                        <div className={`${style.colMods} ${style.modsValue}`}>
+                                            {score.mods && score.mods !== 'NM'
+                                                ? `+${score.mods}`
+                                                : 'None'}
+                                        </div>
+
+                                        <div className={`${style.colCombo} ${style.statValue}`}>
+                                            {score.max_combo ? `${score.max_combo}x` : '-'}
+                                        </div>
+                                    </>
+                                )
+
+                                if (isOsuGlobal && score.player?.id) {
+                                    return (
+                                        <a
+                                            key={`${score.id || index}-${rankNumber}`}
+                                            href={`https://osu.ppy.sh/users/${score.player.id}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className={style.playerRow}
+                                        >
+                                            {rowContent}
+                                        </a>
+                                    )
+                                }
+
+                                if (score.player?.id) {
+                                    return (
+                                        <Link
+                                            key={`${score.id || index}-${rankNumber}`}
+                                            to={`/profile/${score.player.id}`}
+                                            className={style.playerRow}
+                                        >
+                                            {rowContent}
+                                        </Link>
+                                    )
+                                }
+
+                                return (
+                                    <div
+                                        key={`${score.id || index}-${rankNumber}`}
+                                        className={style.playerRow}
+                                    >
+                                        {rowContent}
+                                    </div>
+                                )
+                            })
+                        ) : (
+                            <div className={style.emptyMessage}>
+                                {scope === 'local'
+                                    ? 'Nenhum recorde registrado ainda neste mapa no servidor Fubika.'
+                                    : 'Nenhum recorde encontrado no osu! oficial.'}
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
         </section>
     )
@@ -461,7 +721,11 @@ const Beatmap: React.FC = () => {
             <div className={style.appShell}>
                 <div className={style.pageShell}>
                     <MapCard currentBeatmap={currentBeatmap} beatmapSet={beatmapSet} />
-                    <Leaderboard />
+                    <Leaderboard
+                        key={currentBeatmap.beatmap_id}
+                        beatmapId={currentBeatmap.beatmap_id}
+                        initialScores={currentBeatmap.scores}
+                    />
                 </div>
             </div>
         </WrapperComponent>

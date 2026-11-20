@@ -213,6 +213,7 @@ const mapDatabaseToScoreWithoutMap = (row: any): Omit<IScore, 'beatmap'> => {
             id: row.userid,
             name: row.name,
             safe_name: row.safe_name,
+            country: row.country || 'BR',
             rank: 0, 
             pp: row.user_pp || 0,
             acc: row.user_acc || 0,
@@ -236,7 +237,73 @@ const mapDatabaseToScoreWithoutMap = (row: any): Omit<IScore, 'beatmap'> => {
     };
 };
 
-const getBeatmapLB = async (beatmapId: number, knownMd5?: string): Promise<Omit<IScore, 'beatmap'>[]> => {
+export const getBeatmapOfficialLB = async (beatmapId: number): Promise<Omit<IScore, 'beatmap'>[]> => {
+    try {
+        const osuRes = await axios.get(`https://osu.ppy.sh/beatmaps/${beatmapId}/scores`, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0',
+                'Accept': 'application/json'
+            },
+            timeout: 6000
+        });
+
+        if (osuRes.data?.scores && Array.isArray(osuRes.data.scores)) {
+            return osuRes.data.scores.map((score: any): Omit<IScore, 'beatmap'> => ({
+                id: Number(score.id || 0),
+                score: Number(score.classic_total_score || score.total_score || 0),
+                pp: Number(score.pp || 0),
+                acc: Number(((score.accuracy ?? 0) * 100).toFixed(2)),
+                mods_int: 0,
+                mods: Array.isArray(score.mods)
+                    ? score.mods.map((m: any) => typeof m === 'string' ? m : m.acronym).join('') || 'NM'
+                    : 'NM',
+                n300: Number(score.statistics?.great ?? 0),
+                n100: Number(score.statistics?.ok ?? 0),
+                n50: Number(score.statistics?.meh ?? 0),
+                nmiss: Number(score.statistics?.miss ?? 0),
+                grade: String(score.rank || 'N'),
+                perfect: Boolean(score.is_perfect_combo || score.legacy_perfect),
+                max_combo: Number(score.max_combo || 0),
+                play_time: score.ended_at ? new Date(score.ended_at) : new Date(),
+                player: {
+                    id: Number(score.user?.id || 0),
+                    name: score.user?.username || 'osu! player',
+                    safe_name: score.user?.username || 'osu! player',
+                    country: score.user?.country_code || score.user?.country?.code || 'BR',
+                    rank: 0,
+                    pp: 0,
+                    acc: 0,
+                    pfp: score.user?.avatar_url,
+                    banner: score.user?.cover?.url,
+                    a_count: 0,
+                    s_count: 0,
+                    ss_count: 0,
+                    sh_count: 0,
+                    ssh_count: 0,
+                    level: 0,
+                    total_score: 0,
+                    ranked_score: 0,
+                    max_combo: 0,
+                    playtime: 0,
+                    playcount: 0
+                }
+            }));
+        }
+    } catch {
+        // Fallback silencioso caso a requisição externa falhe
+    }
+    return [];
+};
+
+export const getBeatmapLB = async (
+    beatmapId: number, 
+    knownMd5?: string, 
+    scope: 'all' | 'local' | 'global' = 'all'
+): Promise<Omit<IScore, 'beatmap'>[]> => {
+    if (scope === 'global') {
+        return await getBeatmapOfficialLB(beatmapId);
+    }
+
     let bmap_md5 = knownMd5;
     
     if (!bmap_md5) {
@@ -263,64 +330,80 @@ const getBeatmapLB = async (beatmapId: number, knownMd5?: string): Promise<Omit<
                         bmap_md5 = catboyRes.data.checksum;
                     }
                 } catch {
-                    return [];
+                    if (scope === 'local') return [];
                 }
             }
         }
     }
 
-    if (!bmap_md5) return [];
+    let localScores: Omit<IScore, 'beatmap'>[] = [];
 
-    const mapLBRaw = await prisma.$queryRaw<any[]>`
-        WITH RankedScores AS (
-            SELECT 
-                s.id as score_id,
-                s.userid,
-                s.score as score_val,
-                s.pp as score_pp,
-                s.acc as score_acc,
-                s.max_combo,
-                s.mods,
-                s.n300, s.n100, s.n50, s.nmiss,
-                s.grade,
-                s.perfect,
-                s.map_md5,
-                s.mode, 
-                s.play_time,
-                ROW_NUMBER() OVER (
-                    PARTITION BY s.userid 
-                    ORDER BY s.score DESC
-                ) as rn
-            FROM scores s
-            WHERE s.map_md5 = ${bmap_md5} AND (s.status = 2 OR s.status = 3) AND (s.mods & 536870912) > 0
-        )
-        SELECT 
-            rs.*,
-            u.name, 
-            u.safe_name,
-            u.latest_activity as last_activity,
-            
-            st.pp as user_pp,
-            st.acc as user_acc,
-            st.tscore as user_tscore,
-            st.rscore as user_rscore,
-            st.max_combo as user_max_combo,
-            st.playtime,
-            st.x_count, st.xh_count, st.s_count, st.sh_count, st.a_count
+    if (bmap_md5) {
+        try {
+            const mapLBRaw = await prisma.$queryRaw<any[]>`
+                WITH RankedScores AS (
+                    SELECT 
+                        s.id as score_id,
+                        s.userid,
+                        s.score as score_val,
+                        s.pp as score_pp,
+                        s.acc as score_acc,
+                        s.max_combo,
+                        s.mods,
+                        s.n300, s.n100, s.n50, s.nmiss,
+                        s.grade,
+                        s.perfect,
+                        s.map_md5,
+                        s.mode, 
+                        s.play_time,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.userid 
+                            ORDER BY s.pp DESC, s.score DESC
+                        ) as rn
+                    FROM scores s
+                    WHERE s.map_md5 = ${bmap_md5} AND (s.status = 2 OR s.status = 3)
+                )
+                SELECT 
+                    rs.*,
+                    u.name, 
+                    u.safe_name,
+                    u.country,
+                    u.latest_activity as last_activity,
+                    
+                    st.pp as user_pp,
+                    st.acc as user_acc,
+                    st.tscore as user_tscore,
+                    st.rscore as user_rscore,
+                    st.max_combo as user_max_combo,
+                    st.playtime,
+                    st.x_count, st.xh_count, st.s_count, st.sh_count, st.a_count
 
-        FROM RankedScores rs
-        JOIN users u ON rs.userid = u.id
-        LEFT JOIN stats st ON u.id = st.id AND st.mode = rs.mode
-        WHERE rs.rn = 1 
-        ORDER BY rs.score_val DESC
-        LIMIT 50;
-    `;
+                FROM RankedScores rs
+                JOIN users u ON rs.userid = u.id
+                LEFT JOIN stats st ON u.id = st.id AND st.mode = rs.mode
+                WHERE rs.rn = 1 
+                ORDER BY rs.score_val DESC
+                LIMIT 50;
+            `;
 
-    if (!mapLBRaw || mapLBRaw.length === 0) {
-        return [];
+            if (mapLBRaw && mapLBRaw.length > 0) {
+                localScores = mapLBRaw.map((row) => mapDatabaseToScoreWithoutMap(row));
+            }
+        } catch {
+            // Em caso de falha de consulta no banco local, segue
+        }
     }
 
-    return mapLBRaw.map((row) => mapDatabaseToScoreWithoutMap(row));
+    if (scope === 'local') {
+        return localScores;
+    }
+
+    // Se escopo for 'all' e o servidor local não tiver nenhum score nesse mapa, busca do osu! oficial como fallback automático
+    if (localScores.length === 0) {
+        return await getBeatmapOfficialLB(beatmapId);
+    }
+
+    return localScores;
 }
 
 const getBeatmapPlaycount = async (md5: string): Promise<number> => {
