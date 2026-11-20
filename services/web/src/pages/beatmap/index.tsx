@@ -7,7 +7,6 @@ import {
     type ApiBeatmap,
     type ApiBeatmapset,
     type ApiScore,
-    fetchBeatmapScores,
     fetchBeatmapWithSetFromMirror,
     getCachedBeatmapSetFromMirror,
 } from '../../services/profileData'
@@ -354,8 +353,7 @@ function MapCard({
 }
 
 interface LeaderboardProps {
-    beatmapId: number
-    initialScores?: ApiScore[]
+    scores?: ApiScore[]
 }
 
 const stateNames: Record<string, string> = {
@@ -369,38 +367,7 @@ const stateNames: Record<string, string> = {
     BR: 'Brasil',
 }
 
-const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) => {
-    const [fetchedScores, setFetchedScores] = useState<ApiScore[] | null>(null)
-    const [loading, setLoading] = useState<boolean>(() => !initialScores || initialScores.length === 0)
-
-    useEffect(() => {
-        let isMounted = true
-
-        if (initialScores && initialScores.length > 0) {
-            return
-        }
-
-        fetchBeatmapScores(beatmapId)
-            .then((data) => {
-                if (isMounted) {
-                    setFetchedScores(data)
-                    setLoading(false)
-                }
-            })
-            .catch(() => {
-                if (isMounted) {
-                    setFetchedScores([])
-                    setLoading(false)
-                }
-            })
-
-        return () => {
-            isMounted = false
-        }
-    }, [beatmapId, initialScores])
-
-    const scores = initialScores && initialScores.length > 0 ? initialScores : fetchedScores
-
+const Leaderboard: React.FC<LeaderboardProps> = ({ scores }) => {
     return (
         <section className={style.leaderboard} id="leaderboard">
             <div className={style.cats} aria-hidden="true">
@@ -428,11 +395,7 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) =
                     </div>
 
                     <div className={style.rowsContainer}>
-                        {loading ? (
-                            <div className={style.statusMessage}>
-                                Carregando leaderboard do mapa...
-                            </div>
-                        ) : scores && scores.length > 0 ? (
+                        {scores && scores.length > 0 ? (
                             scores.map((score, index) => {
                                 const rankNumber = index + 1
                                 const rankClass =
@@ -550,15 +513,16 @@ const Beatmap: React.FC = () => {
 
         const loadBeatmap = async () => {
             const cachedMirror = getCachedBeatmapSetFromMirror(id)
-            if (cachedMirror && !cancelled) {
+            if (cachedMirror) {
                 setAsyncBundle({
                     key: routeKey,
                     beatmap: cachedMirror.beatmap,
                     beatmapSet: cachedMirror.beatmapSet,
                 })
+                return
             }
 
-            const mirror = await fetchBeatmapWithSetFromMirror(id, { forceRefresh: true })
+            const mirror = await fetchBeatmapWithSetFromMirror(id)
             if (cancelled) return
 
             if (mirror) {
@@ -567,7 +531,7 @@ const Beatmap: React.FC = () => {
                     beatmap: mirror.beatmap,
                     beatmapSet: mirror.beatmapSet,
                 })
-            } else if (!cachedMirror) {
+            } else {
                 setAsyncBundle({ key: routeKey, beatmap: null, beatmapSet: null })
             }
         }
@@ -607,11 +571,7 @@ const Beatmap: React.FC = () => {
             <div className={style.appShell}>
                 <div className={style.pageShell}>
                     <MapCard currentBeatmap={currentBeatmap} beatmapSet={beatmapSet} />
-                    <Leaderboard
-                        key={currentBeatmap.beatmap_id}
-                        beatmapId={currentBeatmap.beatmap_id}
-                        initialScores={currentBeatmap.scores}
-                    />
+                    <Leaderboard scores={currentBeatmap.scores} />
                 </div>
             </div>
         </WrapperComponent>

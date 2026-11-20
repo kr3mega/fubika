@@ -213,7 +213,6 @@ const mapDatabaseToScoreWithoutMap = (row: any): Omit<IScore, 'beatmap'> => {
             id: row.userid,
             name: row.name,
             safe_name: row.safe_name,
-            country: row.country || 'BR',
             rank: 0, 
             pp: row.user_pp || 0,
             acc: row.user_acc || 0,
@@ -237,11 +236,8 @@ const mapDatabaseToScoreWithoutMap = (row: any): Omit<IScore, 'beatmap'> => {
     };
 };
 
-export const getBeatmapLB = async (
-    beatmapId: number, 
-    knownMd5?: string
-): Promise<Omit<IScore, 'beatmap'>[]> => {
-    let bmap_md5 = knownMd5?.toLowerCase().trim();
+const getBeatmapLB = async (beatmapId: number, knownMd5?: string): Promise<Omit<IScore, 'beatmap'>[]> => {
+    let bmap_md5 = knownMd5;
     
     if (!bmap_md5) {
         const localMap = await prisma.maps.findFirst({
@@ -250,12 +246,12 @@ export const getBeatmapLB = async (
         });
 
         if (localMap && localMap.md5) {
-            bmap_md5 = localMap.md5.toLowerCase().trim();
+            bmap_md5 = localMap.md5;
         } else {
             try {
                 const response = await osuApiClient.get(`/beatmaps/${beatmapId}`);
                 if (response.data && response.data.checksum) {
-                    bmap_md5 = response.data.checksum.toLowerCase().trim();
+                    bmap_md5 = response.data.checksum;
                 }
             } catch {
                 try {
@@ -264,7 +260,7 @@ export const getBeatmapLB = async (
                         timeout: 5000
                     });
                     if (catboyRes.data?.checksum) {
-                        bmap_md5 = catboyRes.data.checksum.toLowerCase().trim();
+                        bmap_md5 = catboyRes.data.checksum;
                     }
                 } catch {
                     return [];
@@ -273,14 +269,10 @@ export const getBeatmapLB = async (
         }
     }
 
-    if (!bmap_md5) {
-        return [];
-    }
+    if (!bmap_md5) return [];
 
-    let localScores: Omit<IScore, 'beatmap'>[] = [];
-
-    try {
-        const mapLBRaw = await prisma.$queryRaw<any[]>`
+    const mapLBRaw = await prisma.$queryRaw<any[]>`
+        WITH RankedScores AS (
             SELECT 
                 s.id as score_id,
                 s.userid,
@@ -295,121 +287,41 @@ export const getBeatmapLB = async (
                 s.map_md5,
                 s.mode, 
                 s.play_time,
-                u.name, 
-                u.safe_name,
-                u.country,
-                u.latest_activity as last_activity,
-                st.pp as user_pp,
-                st.acc as user_acc,
-                st.tscore as user_tscore,
-                st.rscore as user_rscore,
-                st.max_combo as user_max_combo,
-                st.playtime,
-                st.x_count, st.xh_count, st.s_count, st.sh_count, st.a_count
+                ROW_NUMBER() OVER (
+                    PARTITION BY s.userid 
+                    ORDER BY s.score DESC
+                ) as rn
             FROM scores s
-            JOIN users u ON s.userid = u.id
-            LEFT JOIN stats st ON u.id = st.id AND st.mode = s.mode
-            WHERE s.map_md5 = ${bmap_md5}
-              AND s.status IN (1, 2, 3)
-              AND s.grade != 'F'
-              AND (u.priv & 1)
-            ORDER BY s.pp DESC, s.score DESC
-            LIMIT 100;
-        `;
+            WHERE s.map_md5 = ${bmap_md5} AND (s.status = 2 OR s.status = 3) AND (s.mods & 536870912) > 0
+        )
+        SELECT 
+            rs.*,
+            u.name, 
+            u.safe_name,
+            u.latest_activity as last_activity,
+            
+            st.pp as user_pp,
+            st.acc as user_acc,
+            st.tscore as user_tscore,
+            st.rscore as user_rscore,
+            st.max_combo as user_max_combo,
+            st.playtime,
+            st.x_count, st.xh_count, st.s_count, st.sh_count, st.a_count
 
-        if (mapLBRaw && mapLBRaw.length > 0) {
-            const seenUsers = new Set<number>();
-            const deduplicated = [];
-            for (const row of mapLBRaw) {
-                if (!seenUsers.has(row.userid)) {
-                    seenUsers.add(row.userid);
-                    deduplicated.push(mapDatabaseToScoreWithoutMap(row));
-                    if (deduplicated.length >= 50) break;
-                }
-            }
-            localScores = deduplicated;
-        }
-    } catch {
-        // Fallback via Prisma findMany caso queryRaw falhe
-        try {
-            const rawScores = await prisma.scores.findMany({
-                where: {
-                    map_md5: bmap_md5,
-                    status: { in: [1, 2, 3] },
-                    grade: { not: 'F' },
-                    user: {
-                        priv: { gt: 0 }
-                    }
-                },
-                include: {
-                    user: {
-                        include: {
-                            stats: true
-                        }
-                    }
-                },
-                orderBy: [
-                    { pp: 'desc' },
-                    { score: 'desc' }
-                ],
-                take: 100
-            });
+        FROM RankedScores rs
+        JOIN users u ON rs.userid = u.id
+        LEFT JOIN stats st ON u.id = st.id AND st.mode = rs.mode
+        WHERE rs.rn = 1 
+        ORDER BY rs.score_val DESC
+        LIMIT 50;
+    `;
 
-            const seenUsers = new Set<number>();
-            const deduplicated: Omit<IScore, 'beatmap'>[] = [];
-            for (const row of rawScores) {
-                if (!seenUsers.has(row.userid)) {
-                    seenUsers.add(row.userid);
-                    const userStats = row.user.stats.find(s => s.mode === row.mode) || row.user.stats[0];
-                    deduplicated.push({
-                        id: Number(row.id),
-                        score: row.score,
-                        pp: row.pp,
-                        acc: row.acc,
-                        mods_int: row.mods,
-                        mods: getModString(row.mods),
-                        n300: row.n300,
-                        n100: row.n100,
-                        n50: row.n50,
-                        nmiss: row.nmiss,
-                        grade: row.grade,
-                        perfect: Boolean(row.perfect),
-                        max_combo: row.max_combo,
-                        play_time: row.play_time,
-                        player: {
-                            id: row.user.id,
-                            name: row.user.name,
-                            safe_name: row.user.safe_name,
-                            country: row.user.country || 'BR',
-                            rank: 0,
-                            pp: userStats?.pp || 0,
-                            acc: userStats?.acc || 0,
-                            pfp: `https://a.${process.env.DOMAIN}/${row.user.id}`,
-                            banner: `https://assets.${process.env.DOMAIN}/user-profile-covers/${row.user.id}.jpg`,
-                            a_count: userStats?.a_count || 0,
-                            s_count: userStats?.s_count || 0,
-                            ss_count: userStats?.x_count || 0,
-                            sh_count: userStats?.sh_count || 0,
-                            ssh_count: userStats?.xh_count || 0,
-                            level: 0,
-                            total_score: Number(userStats?.tscore || 0),
-                            ranked_score: Number(userStats?.rscore || 0),
-                            max_combo: userStats?.max_combo || 0,
-                            playtime: userStats?.playtime || 0,
-                            playcount: 0
-                        }
-                    });
-                    if (deduplicated.length >= 50) break;
-                }
-            }
-            localScores = deduplicated;
-        } catch {
-            localScores = [];
-        }
+    if (!mapLBRaw || mapLBRaw.length === 0) {
+        return [];
     }
 
-    return localScores;
-};
+    return mapLBRaw.map((row) => mapDatabaseToScoreWithoutMap(row));
+}
 
 const getBeatmapPlaycount = async (md5: string): Promise<number> => {
     return await prisma.scores.count({

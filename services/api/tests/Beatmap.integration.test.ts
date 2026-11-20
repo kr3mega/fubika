@@ -1,32 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Fastify from 'fastify'
 import fastifyJwt from '@fastify/jwt'
-import { validatorCompiler, serializerCompiler } from 'fastify-type-provider-zod'
 
 vi.mock('../src/utils/prisma', () => ({
     default: {
-        maps: { findFirst: vi.fn(), findMany: vi.fn() },
+        maps: { findFirst: vi.fn() },
         scores: { count: vi.fn() },
         $queryRaw: vi.fn(),
     },
 }))
-
-vi.mock('axios', () => {
-    const mockAxiosInstance = {
-        get: vi.fn().mockResolvedValue({ data: null }),
-        post: vi.fn().mockResolvedValue({ data: null }),
-        interceptors: {
-            request: { use: vi.fn() },
-            response: { use: vi.fn() }
-        }
-    }
-    return {
-        default: {
-            ...mockAxiosInstance,
-            create: vi.fn(() => mockAxiosInstance)
-        }
-    }
-})
 
 vi.mock('../src/utils/axios', () => ({
     default: { get: vi.fn() },
@@ -40,8 +22,6 @@ vi.mock('../src/middlewares/auth.middleware', () => ({
 
 const buildServer = async () => {
     const app = Fastify()
-    app.setValidatorCompiler(validatorCompiler)
-    app.setSerializerCompiler(serializerCompiler)
     await app.register(fastifyJwt, { secret: 'test_secret' })
 
     const beatmapRoutes = (await import('../src/modules/beatmap/beatmap.route')).default
@@ -241,25 +221,9 @@ describe('GET /beatmap/:id', () => {
         expect(res.statusCode).toBe(400)
     })
 
-    it('permite acesso público sem token', async () => {
-        osuApiMock.get.mockResolvedValueOnce({ data: mockOsuBeatmap })
-        prismaMock.maps.findFirst.mockResolvedValueOnce({ md5: 'abc123md5' })
-        prismaMock.$queryRaw.mockResolvedValueOnce([mockLeaderboardRow])
-        prismaMock.scores.count.mockResolvedValueOnce(10).mockResolvedValueOnce(8)
-
+    it('retorna 401 sem token', async () => {
         const res = await app.inject({ method: 'GET', url: '/beatmap/123' })
-        expect(res.statusCode).toBe(200)
-    })
-
-    it('retorna leaderboard de scores via /beatmap/:id/scores', async () => {
-        prismaMock.maps.findFirst.mockResolvedValueOnce({ md5: 'abc123md5' })
-        prismaMock.$queryRaw.mockResolvedValueOnce([mockLeaderboardRow])
-
-        const res = await app.inject({ method: 'GET', url: '/beatmap/123/scores?type=local' })
-        expect(res.statusCode).toBe(200)
-        expect(Array.isArray(res.json())).toBe(true)
-        expect(res.json().length).toBe(1)
-        expect(res.json()[0].player.name).toBe('TestUser')
+        expect(res.statusCode).toBe(401)
     })
 
     it('inclui campos corretos no response', async () => {
@@ -356,11 +320,9 @@ describe('GET /beatmap/c/:id', () => {
         expect(res.statusCode).toBe(400)
     })
 
-    it('permite acesso público ao beatmapset sem token', async () => {
-        osuApiMock.get.mockResolvedValueOnce({ data: mockOsuBeatmapset })
-
+    it('retorna 401 sem token', async () => {
         const res = await app.inject({ method: 'GET', url: '/beatmap/c/456' })
-        expect(res.statusCode).toBe(200)
+        expect(res.statusCode).toBe(401)
     })
 
     it('lida com beatmapset sem beatmaps (array vazio)', async () => {

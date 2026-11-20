@@ -1,6 +1,6 @@
 import { FastifyReply, FastifyRequest } from "fastify";
-import { getBeatmap, getBeatmapLB, getBeatmapset } from "./beatmap.service";
-import { BeatmapScoresQuery, SearchBeatmaps } from "./beatmap.schema";
+import { getBeatmap, getBeatmapset } from "./beatmap.service";
+import { SearchBeatmaps } from "./beatmap.schema";
 
 const parseInput = (params: SearchBeatmaps) => {
     return {
@@ -17,16 +17,6 @@ export const handleBeatmapReq = async (
     const beatmap = await getBeatmap(input);
     
     return res.status(200).send(beatmap);
-};
-
-export const handleBeatmapScoresReq = async (
-    req: FastifyRequest<{ Params: SearchBeatmaps }>,
-    res: FastifyReply
-) => {
-    const input = parseInput(req.params);
-    const scores = await getBeatmapLB(input.id);
-    
-    return res.status(200).send(scores);
 };
 
 export const handleBeatmapsetReq = async (

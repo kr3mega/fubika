@@ -426,8 +426,7 @@ const setCachedBeatmapSet = (beatmapSet: ApiBeatmapset): void => {
     }
     for (const b of normalizedSet.beatmaps) {
         if (b.beatmap_id > 0) {
-            const existing = beatmapMirrorCache.get(b.beatmap_id)
-            setCachedBeatmap(existing?.scores && !b.scores ? { ...b, scores: existing.scores } : b)
+            setCachedBeatmap(b)
         }
     }
     persistMapToStorage(BEATMAP_STORAGE_KEY, beatmapMirrorCache, MAX_CACHED_BEATMAPS)
@@ -675,25 +674,22 @@ export const getCachedBeatmapSetFromMirror = (
 }
 
 export const fetchBeatmapWithSetFromMirror = async (
-    beatmapId: number | string,
-    options?: { forceRefresh?: boolean }
+    beatmapId: number | string
 ): Promise<{ beatmap: ApiBeatmap; beatmapSet: ApiBeatmapset } | null> => {
-    if (!options?.forceRefresh) {
-        const preCached = getCachedBeatmapSetFromMirror(beatmapId)
-        if (preCached && preCached.beatmap.scores && preCached.beatmap.scores.length > 0) {
-            return preCached
-        }
+    const preCached = getCachedBeatmapSetFromMirror(beatmapId)
+    if (preCached) {
+        return preCached
+    }
 
-        await waitForIdbHydration()
-        const idbCached = getCachedBeatmapSetFromMirror(beatmapId)
-        if (idbCached && idbCached.beatmap.scores && idbCached.beatmap.scores.length > 0) {
-            return idbCached
-        }
+    await waitForIdbHydration()
+    const idbCached = getCachedBeatmapSetFromMirror(beatmapId)
+    if (idbCached) {
+        return idbCached
     }
 
     const requestKey = String(beatmapId)
     const existing = inFlightBeatmapSetRequests.get(requestKey)
-    if (existing && !options?.forceRefresh) {
+    if (existing) {
         return existing
     }
 
@@ -784,31 +780,6 @@ export const fetchBeatmapWithSetFromMirror = async (
 
     inFlightBeatmapSetRequests.set(requestKey, requestPromise)
     return requestPromise
-}
-
-export const fetchBeatmapScores = async (
-    beatmapId: number | string
-): Promise<ApiScore[]> => {
-    const requestKey = encodeURIComponent(String(beatmapId))
-    try {
-        const res = await api.get<ApiScore[]>(`/beatmap/${requestKey}/scores`)
-        if (Array.isArray(res.data)) {
-            return res.data
-        }
-    } catch {
-        // Fallback para /beatmap/:id caso a sub-rota /scores não exista no servidor de produção
-    }
-
-    try {
-        const resMap = await api.get<ApiBeatmap>(`/beatmap/${requestKey}`)
-        if (resMap.data && Array.isArray(resMap.data.scores)) {
-            setCachedBeatmap(resMap.data)
-            return resMap.data.scores
-        }
-    } catch {
-        // Fallback silencioso
-    }
-    return []
 }
 
 interface KnownPlayerMeta {
