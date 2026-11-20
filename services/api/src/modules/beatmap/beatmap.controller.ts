@@ -20,12 +20,11 @@ export const handleBeatmapReq = async (
 };
 
 export const handleBeatmapScoresReq = async (
-    req: FastifyRequest<{ Params: SearchBeatmaps; Querystring: BeatmapScoresQuery }>,
+    req: FastifyRequest<{ Params: SearchBeatmaps }>,
     res: FastifyReply
 ) => {
     const input = parseInput(req.params);
-    const scope = req.query.type || 'all';
-    const scores = await getBeatmapLB(input.id, undefined, scope);
+    const scores = await getBeatmapLB(input.id);
     
     return res.status(200).send(scores);
 };

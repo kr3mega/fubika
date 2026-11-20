@@ -237,74 +237,11 @@ const mapDatabaseToScoreWithoutMap = (row: any): Omit<IScore, 'beatmap'> => {
     };
 };
 
-export const getBeatmapOfficialLB = async (beatmapId: number): Promise<Omit<IScore, 'beatmap'>[]> => {
-    try {
-        const osuRes = await axios.get(`https://osu.ppy.sh/beatmaps/${beatmapId}/scores`, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0',
-                'Accept': 'application/json'
-            },
-            timeout: 6000
-        });
-
-        if (osuRes.data?.scores && Array.isArray(osuRes.data.scores)) {
-            return osuRes.data.scores.map((score: any): Omit<IScore, 'beatmap'> => ({
-                id: Number(score.id || 0),
-                score: Number(score.classic_total_score || score.total_score || 0),
-                pp: Number(score.pp || 0),
-                acc: Number(((score.accuracy ?? 0) * 100).toFixed(2)),
-                mods_int: 0,
-                mods: Array.isArray(score.mods)
-                    ? score.mods.map((m: any) => typeof m === 'string' ? m : m.acronym).join('') || 'NM'
-                    : 'NM',
-                n300: Number(score.statistics?.great ?? 0),
-                n100: Number(score.statistics?.ok ?? 0),
-                n50: Number(score.statistics?.meh ?? 0),
-                nmiss: Number(score.statistics?.miss ?? 0),
-                grade: String(score.rank || 'N'),
-                perfect: Boolean(score.is_perfect_combo || score.legacy_perfect),
-                max_combo: Number(score.max_combo || 0),
-                play_time: score.ended_at ? new Date(score.ended_at) : new Date(),
-                player: {
-                    id: Number(score.user?.id || 0),
-                    name: score.user?.username || 'osu! player',
-                    safe_name: score.user?.username || 'osu! player',
-                    country: score.user?.country_code || score.user?.country?.code || 'BR',
-                    rank: 0,
-                    pp: 0,
-                    acc: 0,
-                    pfp: score.user?.avatar_url,
-                    banner: score.user?.cover?.url,
-                    a_count: 0,
-                    s_count: 0,
-                    ss_count: 0,
-                    sh_count: 0,
-                    ssh_count: 0,
-                    level: 0,
-                    total_score: 0,
-                    ranked_score: 0,
-                    max_combo: 0,
-                    playtime: 0,
-                    playcount: 0
-                }
-            }));
-        }
-    } catch {
-        // Fallback silencioso caso a requisição externa falhe
-    }
-    return [];
-};
-
 export const getBeatmapLB = async (
     beatmapId: number, 
-    knownMd5?: string, 
-    scope: 'all' | 'local' | 'global' = 'all'
+    knownMd5?: string
 ): Promise<Omit<IScore, 'beatmap'>[]> => {
-    if (scope === 'global') {
-        return await getBeatmapOfficialLB(beatmapId);
-    }
-
-    let bmap_md5 = knownMd5;
+    let bmap_md5 = knownMd5?.toLowerCase().trim();
     
     if (!bmap_md5) {
         const localMap = await prisma.maps.findFirst({
@@ -313,12 +250,12 @@ export const getBeatmapLB = async (
         });
 
         if (localMap && localMap.md5) {
-            bmap_md5 = localMap.md5;
+            bmap_md5 = localMap.md5.toLowerCase().trim();
         } else {
             try {
                 const response = await osuApiClient.get(`/beatmaps/${beatmapId}`);
                 if (response.data && response.data.checksum) {
-                    bmap_md5 = response.data.checksum;
+                    bmap_md5 = response.data.checksum.toLowerCase().trim();
                 }
             } catch {
                 try {
@@ -327,84 +264,152 @@ export const getBeatmapLB = async (
                         timeout: 5000
                     });
                     if (catboyRes.data?.checksum) {
-                        bmap_md5 = catboyRes.data.checksum;
+                        bmap_md5 = catboyRes.data.checksum.toLowerCase().trim();
                     }
                 } catch {
-                    if (scope === 'local') return [];
+                    return [];
                 }
             }
         }
     }
 
+    if (!bmap_md5) {
+        return [];
+    }
+
     let localScores: Omit<IScore, 'beatmap'>[] = [];
 
-    if (bmap_md5) {
-        try {
-            const mapLBRaw = await prisma.$queryRaw<any[]>`
-                WITH RankedScores AS (
-                    SELECT 
-                        s.id as score_id,
-                        s.userid,
-                        s.score as score_val,
-                        s.pp as score_pp,
-                        s.acc as score_acc,
-                        s.max_combo,
-                        s.mods,
-                        s.n300, s.n100, s.n50, s.nmiss,
-                        s.grade,
-                        s.perfect,
-                        s.map_md5,
-                        s.mode, 
-                        s.play_time,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY s.userid 
-                            ORDER BY s.pp DESC, s.score DESC
-                        ) as rn
-                    FROM scores s
-                    WHERE s.map_md5 = ${bmap_md5} AND (s.status = 2 OR s.status = 3)
-                )
-                SELECT 
-                    rs.*,
-                    u.name, 
-                    u.safe_name,
-                    u.country,
-                    u.latest_activity as last_activity,
-                    
-                    st.pp as user_pp,
-                    st.acc as user_acc,
-                    st.tscore as user_tscore,
-                    st.rscore as user_rscore,
-                    st.max_combo as user_max_combo,
-                    st.playtime,
-                    st.x_count, st.xh_count, st.s_count, st.sh_count, st.a_count
+    try {
+        const mapLBRaw = await prisma.$queryRaw<any[]>`
+            SELECT 
+                s.id as score_id,
+                s.userid,
+                s.score as score_val,
+                s.pp as score_pp,
+                s.acc as score_acc,
+                s.max_combo,
+                s.mods,
+                s.n300, s.n100, s.n50, s.nmiss,
+                s.grade,
+                s.perfect,
+                s.map_md5,
+                s.mode, 
+                s.play_time,
+                u.name, 
+                u.safe_name,
+                u.country,
+                u.latest_activity as last_activity,
+                st.pp as user_pp,
+                st.acc as user_acc,
+                st.tscore as user_tscore,
+                st.rscore as user_rscore,
+                st.max_combo as user_max_combo,
+                st.playtime,
+                st.x_count, st.xh_count, st.s_count, st.sh_count, st.a_count
+            FROM scores s
+            JOIN users u ON s.userid = u.id
+            LEFT JOIN stats st ON u.id = st.id AND st.mode = s.mode
+            WHERE s.map_md5 = ${bmap_md5}
+              AND s.status IN (1, 2, 3)
+              AND s.grade != 'F'
+              AND (u.priv & 1)
+            ORDER BY s.pp DESC, s.score DESC
+            LIMIT 100;
+        `;
 
-                FROM RankedScores rs
-                JOIN users u ON rs.userid = u.id
-                LEFT JOIN stats st ON u.id = st.id AND st.mode = rs.mode
-                WHERE rs.rn = 1 
-                ORDER BY rs.score_val DESC
-                LIMIT 50;
-            `;
-
-            if (mapLBRaw && mapLBRaw.length > 0) {
-                localScores = mapLBRaw.map((row) => mapDatabaseToScoreWithoutMap(row));
+        if (mapLBRaw && mapLBRaw.length > 0) {
+            const seenUsers = new Set<number>();
+            const deduplicated = [];
+            for (const row of mapLBRaw) {
+                if (!seenUsers.has(row.userid)) {
+                    seenUsers.add(row.userid);
+                    deduplicated.push(mapDatabaseToScoreWithoutMap(row));
+                    if (deduplicated.length >= 50) break;
+                }
             }
+            localScores = deduplicated;
+        }
+    } catch {
+        // Fallback via Prisma findMany caso queryRaw falhe
+        try {
+            const rawScores = await prisma.scores.findMany({
+                where: {
+                    map_md5: bmap_md5,
+                    status: { in: [1, 2, 3] },
+                    grade: { not: 'F' },
+                    user: {
+                        priv: { gt: 0 }
+                    }
+                },
+                include: {
+                    user: {
+                        include: {
+                            stats: true
+                        }
+                    }
+                },
+                orderBy: [
+                    { pp: 'desc' },
+                    { score: 'desc' }
+                ],
+                take: 100
+            });
+
+            const seenUsers = new Set<number>();
+            const deduplicated: Omit<IScore, 'beatmap'>[] = [];
+            for (const row of rawScores) {
+                if (!seenUsers.has(row.userid)) {
+                    seenUsers.add(row.userid);
+                    const userStats = row.user.stats.find(s => s.mode === row.mode) || row.user.stats[0];
+                    deduplicated.push({
+                        id: Number(row.id),
+                        score: row.score,
+                        pp: row.pp,
+                        acc: row.acc,
+                        mods_int: row.mods,
+                        mods: getModString(row.mods),
+                        n300: row.n300,
+                        n100: row.n100,
+                        n50: row.n50,
+                        nmiss: row.nmiss,
+                        grade: row.grade,
+                        perfect: Boolean(row.perfect),
+                        max_combo: row.max_combo,
+                        play_time: row.play_time,
+                        player: {
+                            id: row.user.id,
+                            name: row.user.name,
+                            safe_name: row.user.safe_name,
+                            country: row.user.country || 'BR',
+                            rank: 0,
+                            pp: userStats?.pp || 0,
+                            acc: userStats?.acc || 0,
+                            pfp: `https://a.${process.env.DOMAIN}/${row.user.id}`,
+                            banner: `https://assets.${process.env.DOMAIN}/user-profile-covers/${row.user.id}.jpg`,
+                            a_count: userStats?.a_count || 0,
+                            s_count: userStats?.s_count || 0,
+                            ss_count: userStats?.x_count || 0,
+                            sh_count: userStats?.sh_count || 0,
+                            ssh_count: userStats?.xh_count || 0,
+                            level: 0,
+                            total_score: Number(userStats?.tscore || 0),
+                            ranked_score: Number(userStats?.rscore || 0),
+                            max_combo: userStats?.max_combo || 0,
+                            playtime: userStats?.playtime || 0,
+                            playcount: 0
+                        }
+                    });
+                    if (deduplicated.length >= 50) break;
+                }
+            }
+            localScores = deduplicated;
         } catch {
-            // Em caso de falha de consulta no banco local, segue
+            localScores = [];
         }
     }
 
-    if (scope === 'local') {
-        return localScores;
-    }
-
-    // Se escopo for 'all' e o servidor local não tiver nenhum score nesse mapa, busca do osu! oficial como fallback automático
-    if (localScores.length === 0) {
-        return await getBeatmapOfficialLB(beatmapId);
-    }
-
     return localScores;
-}
+};
 
 const getBeatmapPlaycount = async (md5: string): Promise<number> => {
     return await prisma.scores.count({

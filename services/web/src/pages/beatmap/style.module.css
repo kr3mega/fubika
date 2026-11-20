@@ -614,40 +614,6 @@
   white-space: nowrap;
 }
 
-.modeSelector {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.modeBtn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #aaa;
-  padding: 7px 20px;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  transition: all 0.2s;
-}
-
-.modeBtn:hover {
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-}
-
-.activeMode {
-  background: linear-gradient(var(--color-azul-menos-baitola, #3b82f6) 0%, var(--color-roxo-baitola, #9333ea) 100%);
-  background-origin: border-box;
-  background-repeat: no-repeat;
-  color: white;
-  border-color: transparent;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-}
-
 .tableCard {
   background-color: var(--color-background-dark, #111);
   border-radius: 16px;
@@ -658,7 +624,7 @@
 }
 
 .listSection {
-  zoom: 1.05;
+  zoom: 1.1;
   width: 100%;
   overflow-x: auto;
 }
@@ -674,12 +640,12 @@
 }
 
 .colRank {
-  width: 50px;
-  min-width: 50px;
+  width: 56px;
+  min-width: 56px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  padding-left: 14px;
+  padding-left: 20px;
 }
 
 .rankHash {
@@ -732,43 +698,26 @@
   flex-direction: row;
   align-items: center;
   height: 100%;
-  gap: 7px;
+  gap: 8px;
   overflow: hidden;
 }
 
 .flagIcon {
-  width: 24px;
-  height: 16px;
-  border-radius: 3px;
-  object-fit: cover;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  flex-shrink: 0;
-}
-
-.playerAvatar {
-  width: 20px;
+  width: 28px;
   height: 20px;
-  border-radius: 50%;
+  border-radius: 4px;
   object-fit: cover;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
   flex-shrink: 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  margin-top: -2px;
 }
 
 .username {
-  color: var(--color-azul-baitola, #4ea8de);
+  color: var(--color-azul-baitola);
   font-size: 10px;
-  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.gradeBadge {
-  font-size: 8px;
-  font-weight: 800;
-  margin-left: 2px;
-  flex-shrink: 0;
-  font-family: monospace;
 }
 
 .colPP {
@@ -819,7 +768,7 @@
 .playerRow {
   display: flex;
   align-items: center;
-  height: 34px;
+  height: 32px;
   background-color: var(--color-background);
   text-decoration: none;
   color: inherit;

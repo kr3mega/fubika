@@ -7,7 +7,6 @@ import {
     type ApiBeatmap,
     type ApiBeatmapset,
     type ApiScore,
-    DEFAULT_AVATAR_URL,
     fetchBeatmapScores,
     fetchBeatmapWithSetFromMirror,
     getCachedBeatmapSetFromMirror,
@@ -370,82 +369,37 @@ const stateNames: Record<string, string> = {
     BR: 'Brasil',
 }
 
-const getFlagUrl = (country?: string): string => {
-    const code = (country || 'BR').toUpperCase()
-    if (stateNames[code]) {
-        return `/flags/${code}.svg`
-    }
-    return `https://osu.ppy.sh/images/flags/${code}.png`
-}
-
-const getGradeColor = (grade?: string): string => {
-    switch ((grade || '').toUpperCase()) {
-        case 'XH':
-        case 'SH':
-            return '#38bdf8'
-        case 'X':
-        case 'SS':
-        case 'S':
-            return '#facc15'
-        case 'A':
-            return '#4ade80'
-        case 'B':
-            return '#60a5fa'
-        case 'C':
-            return '#c084fc'
-        case 'D':
-            return '#f87171'
-        default:
-            return '#94a3b8'
-    }
-}
-
 const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) => {
-    const [scope, setScope] = useState<'local' | 'global'>(() =>
-        initialScores && initialScores.length === 0 ? 'global' : 'local'
-    )
-    const [localScores, setLocalScores] = useState<ApiScore[] | null>(initialScores ?? null)
-    const [globalScores, setGlobalScores] = useState<ApiScore[] | null>(null)
-    const [loadingScope, setLoadingScope] = useState<'local' | 'global' | null>(null)
+    const [fetchedScores, setFetchedScores] = useState<ApiScore[] | null>(null)
+    const [loading, setLoading] = useState<boolean>(() => !initialScores || initialScores.length === 0)
 
     useEffect(() => {
         let isMounted = true
 
-        if (scope === 'global' && globalScores === null) {
-            const loadGlobal = async () => {
-                setLoadingScope('global')
-                try {
-                    const data = await fetchBeatmapScores(beatmapId, 'global')
-                    if (isMounted) setGlobalScores(data)
-                } finally {
-                    if (isMounted) setLoadingScope(null)
-                }
-            }
-            loadGlobal()
-        } else if (scope === 'local' && localScores === null) {
-            const loadLocal = async () => {
-                setLoadingScope('local')
-                try {
-                    const data = await fetchBeatmapScores(beatmapId, 'local')
-                    if (isMounted) setLocalScores(data)
-                } finally {
-                    if (isMounted) setLoadingScope(null)
-                }
-            }
-            loadLocal()
+        if (initialScores && initialScores.length > 0) {
+            return
         }
+
+        fetchBeatmapScores(beatmapId)
+            .then((data) => {
+                if (isMounted) {
+                    setFetchedScores(data)
+                    setLoading(false)
+                }
+            })
+            .catch(() => {
+                if (isMounted) {
+                    setFetchedScores([])
+                    setLoading(false)
+                }
+            })
 
         return () => {
             isMounted = false
         }
-    }, [scope, beatmapId, globalScores, localScores])
+    }, [beatmapId, initialScores])
 
-    const handleScopeChange = (newScope: 'local' | 'global') => {
-        setScope(newScope)
-    }
-
-    const activeScores = scope === 'global' ? globalScores : localScores
-    const loading = loadingScope === scope || activeScores === null
+    const scores = initialScores && initialScores.length > 0 ? initialScores : fetchedScores
 
     return (
         <section className={style.leaderboard} id="leaderboard">
@@ -456,23 +410,6 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) =
 
             <div className={style.boardHeading}>
                 <h2>Leaderboard do mapa</h2>
-            </div>
-
-            <div className={style.modeSelector}>
-                <button
-                    type="button"
-                    className={`${style.modeBtn} ${scope === 'local' ? style.activeMode : ''}`}
-                    onClick={() => handleScopeChange('local')}
-                >
-                    Servidor Fubika
-                </button>
-                <button
-                    type="button"
-                    className={`${style.modeBtn} ${scope === 'global' ? style.activeMode : ''}`}
-                    onClick={() => handleScopeChange('global')}
-                >
-                    Global (osu!)
-                </button>
             </div>
 
             <div className={style.tableCard}>
@@ -495,10 +432,9 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) =
                             <div className={style.statusMessage}>
                                 Carregando leaderboard do mapa...
                             </div>
-                        ) : activeScores && activeScores.length > 0 ? (
-                            activeScores.map((score, index) => {
+                        ) : scores && scores.length > 0 ? (
+                            scores.map((score, index) => {
                                 const rankNumber = index + 1
-                                const isOsuGlobal = scope === 'global'
                                 const rankClass =
                                     rankNumber === 1
                                         ? style.rankTop1
@@ -508,8 +444,16 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) =
                                             ? style.rankTop3
                                             : ''
 
-                                const rowContent = (
-                                    <>
+                                const countryCode = (score.player?.country || 'BR').toUpperCase()
+                                const countryTitle =
+                                    stateNames[countryCode] || countryCode || 'Brasil'
+
+                                return (
+                                    <Link
+                                        key={`${score.id || index}-${rankNumber}`}
+                                        to={`/profile/${score.player?.id || 0}`}
+                                        className={style.playerRow}
+                                    >
                                         <div className={`${style.colRank} ${rankClass}`}>
                                             <span className={style.rankHash}>#</span>
                                             <span className={style.rankValue}>{rankNumber}</span>
@@ -518,37 +462,17 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) =
                                         <div className={style.colPlayer}>
                                             <div className={style.nameInfo}>
                                                 <img
-                                                    src={getFlagUrl(score.player?.country)}
-                                                    alt={score.player?.country || 'BR'}
-                                                    title={
-                                                        stateNames[
-                                                            (score.player?.country || '').toUpperCase()
-                                                        ] || score.player?.country || 'Brasil'
-                                                    }
+                                                    src={`/flags/${countryCode}.svg`}
+                                                    alt={countryTitle}
+                                                    title={countryTitle}
                                                     className={style.flagIcon}
                                                     onError={(e) => {
                                                         e.currentTarget.src = '/flags/BR.svg'
                                                     }}
                                                 />
-                                                <img
-                                                    src={score.player?.pfp || DEFAULT_AVATAR_URL}
-                                                    alt=""
-                                                    className={style.playerAvatar}
-                                                    onError={(e) => {
-                                                        e.currentTarget.src = DEFAULT_AVATAR_URL
-                                                    }}
-                                                />
                                                 <span className={style.username}>
                                                     {score.player?.name || 'Jogador'}
                                                 </span>
-                                                {score.grade && (
-                                                    <span
-                                                        className={style.gradeBadge}
-                                                        style={{ color: getGradeColor(score.grade) }}
-                                                    >
-                                                        {score.grade}
-                                                    </span>
-                                                )}
                                             </div>
                                         </div>
 
@@ -593,49 +517,12 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ beatmapId, initialScores }) =
                                         <div className={`${style.colCombo} ${style.statValue}`}>
                                             {score.max_combo ? `${score.max_combo}x` : '-'}
                                         </div>
-                                    </>
-                                )
-
-                                if (isOsuGlobal && score.player?.id) {
-                                    return (
-                                        <a
-                                            key={`${score.id || index}-${rankNumber}`}
-                                            href={`https://osu.ppy.sh/users/${score.player.id}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className={style.playerRow}
-                                        >
-                                            {rowContent}
-                                        </a>
-                                    )
-                                }
-
-                                if (score.player?.id) {
-                                    return (
-                                        <Link
-                                            key={`${score.id || index}-${rankNumber}`}
-                                            to={`/profile/${score.player.id}`}
-                                            className={style.playerRow}
-                                        >
-                                            {rowContent}
-                                        </Link>
-                                    )
-                                }
-
-                                return (
-                                    <div
-                                        key={`${score.id || index}-${rankNumber}`}
-                                        className={style.playerRow}
-                                    >
-                                        {rowContent}
-                                    </div>
+                                    </Link>
                                 )
                             })
                         ) : (
                             <div className={style.emptyMessage}>
-                                {scope === 'local'
-                                    ? 'Nenhum recorde registrado ainda neste mapa no servidor Fubika.'
-                                    : 'Nenhum recorde encontrado no osu! oficial.'}
+                                Nenhum recorde registrado ainda neste mapa no servidor Fubika.
                             </div>
                         )}
                     </div>
@@ -663,16 +550,15 @@ const Beatmap: React.FC = () => {
 
         const loadBeatmap = async () => {
             const cachedMirror = getCachedBeatmapSetFromMirror(id)
-            if (cachedMirror) {
+            if (cachedMirror && !cancelled) {
                 setAsyncBundle({
                     key: routeKey,
                     beatmap: cachedMirror.beatmap,
                     beatmapSet: cachedMirror.beatmapSet,
                 })
-                return
             }
 
-            const mirror = await fetchBeatmapWithSetFromMirror(id)
+            const mirror = await fetchBeatmapWithSetFromMirror(id, { forceRefresh: true })
             if (cancelled) return
 
             if (mirror) {
@@ -681,7 +567,7 @@ const Beatmap: React.FC = () => {
                     beatmap: mirror.beatmap,
                     beatmapSet: mirror.beatmapSet,
                 })
-            } else {
+            } else if (!cachedMirror) {
                 setAsyncBundle({ key: routeKey, beatmap: null, beatmapSet: null })
             }
         }
